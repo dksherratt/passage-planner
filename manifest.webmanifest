@@ -1,0 +1,16 @@
+{
+  "name": "Grampian Passage Planner",
+  "short_name": "Passage",
+  "description": "Passage planning for the Grampian 234: tides, streams, depth checks, wind-over-tide, bail-out ports and pre-departure checks.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#13233a",
+  "theme_color": "#13233a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

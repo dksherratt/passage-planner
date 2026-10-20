@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Grampian Passage Planner</title>
+<meta name="description" content="Passage planner for the Grampian 234: tides, streams, depth checks, wind-over-tide, bail-out ports and pre-departure checks.">
+<meta name="theme-color" content="#13233a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Passage">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);-webkit-text-size-adjust:100%}
+body{margin:0;font:14px/1.4 system-ui,-apple-system,sans-serif}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=Libre+Caslon+Text:ital,wght@0,400;1,400;1,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-column chart-table sheet. Sticky verdict bar, departure-window strip as hero, then numbered sections in the order you work a passage. */
+:root{
+  --paper:#f2f6f7; --sea:#dbe9f0; --sea-deep:#b9d3e1; --dry:#c6d3a9;
+  --ink:#13233a; --ink-2:#4a5b70; --rule:#c7d4dc;
+  --magenta:#a51c74; --magenta-soft:#f3dcea;
+  --go:#2f7a4f; --go-bg:#dcefe2; --warn:#a86a07; --warn-bg:#f8ead0; --stop:#b3261e; --stop-bg:#f6dcd9;
+  --card:#ffffff;
+  --f-place:"Libre Caslon Text",Georgia,"Times New Roman",serif;
+  --f-ui:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-data:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#0d1724; --sea:#13263a; --sea-deep:#1c3550; --dry:#3b4a2c;
+  --ink:#e4ecf3; --ink-2:#9fb1c3; --rule:#263a50;
+  --magenta:#e06bb3; --magenta-soft:#3a1d33;
+  --go:#6fcf97; --go-bg:#173326; --warn:#f0b955; --warn-bg:#3a2c12; --stop:#ff8a80; --stop-bg:#3d1a18;
+  --card:#111f30; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0d1724; --sea:#13263a; --sea-deep:#1c3550; --dry:#3b4a2c;
+  --ink:#e4ecf3; --ink-2:#9fb1c3; --rule:#263a50;
+  --magenta:#e06bb3; --magenta-soft:#3a1d33;
+  --go:#6fcf97; --go-bg:#173326; --warn:#f0b955; --warn-bg:#3a2c12; --stop:#ff8a80; --stop-bg:#3d1a18;
+  --card:#111f30; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-ui);font-size:16px;line-height:1.45}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--ink)}
+.wrap{max-width:760px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 48px}
+.num,.mono{font-family:var(--f-data);font-variant-numeric:tabular-nums}
+h1,h2,h3{text-wrap:balance;margin:0}
+.place{font-family:var(--f-place);font-style:italic}
+
+/* verdict bar */
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--ink);color:var(--paper);margin-left:calc(-1 * max(16px,env(safe-area-inset-left,0px)));margin-right:calc(-1 * max(16px,env(safe-area-inset-right,0px)));padding:10px max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));display:flex;gap:12px;align-items:center}
+.bar .route{flex:1;min-width:0}
+.bar .route b{font-family:var(--f-place);font-style:italic;font-weight:400;font-size:1.05rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.bar .route span{font-size:.8rem;opacity:.75;font-family:var(--f-data)}
+.pill{font-weight:700;font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;padding:5px 10px;border-radius:3px;white-space:nowrap}
+.pill.go{background:var(--go-bg);color:var(--go)} .pill.caution{background:var(--warn-bg);color:var(--warn)} .pill.nogo{background:var(--stop-bg);color:var(--stop)}
+
+/* voyage */
+.voyage{padding-top:14px}
+.voyage-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.legs-scroll{overflow-x:auto;margin-top:6px;padding-bottom:4px}
+.legs{display:flex;gap:8px;width:max-content}
+.leg{font:inherit;text-align:left;color:var(--ink);background:var(--card);border:1px solid var(--rule);border-radius:3px;padding:8px 10px;cursor:pointer;width:190px;display:grid;gap:2px}
+.leg.on{border-color:var(--magenta);box-shadow:inset 0 0 0 1px var(--magenta)}
+.leg .d{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);display:flex;justify-content:space-between;gap:6px}
+.leg .r{font-family:var(--f-place);font-style:italic;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.leg .t{font-family:var(--f-data);font-size:.75rem;color:var(--ink-2)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:0}
+.dot.go{background:var(--go)} .dot.caution{background:var(--warn)} .dot.nogo{background:var(--stop)} .dot.na{background:var(--rule)}
+.leg.add{border-style:dashed;place-content:center;text-align:center;width:120px;color:var(--magenta);font-weight:600}
+.gap{color:var(--stop);font-size:.72rem;font-weight:600}
+
+/* hero */
+.hero{padding-top:22px;display:grid;gap:14px}
+.eyebrow{font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);font-weight:600}
+.hero h1{font-family:var(--f-place);font-weight:400;font-size:clamp(1.7rem,6vw,2.4rem);line-height:1.1}
+.hero h1 i{color:var(--magenta)}
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule)}
+.facts div{background:var(--card);padding:8px 10px}
+.facts dt{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+.facts dd{margin:0;font-family:var(--f-data);font-size:1.05rem}
+@media (max-width:520px){.facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.window{background:var(--card);border:1px solid var(--rule);padding:12px}
+.window .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.strip-scroll{overflow-x:auto;margin-top:10px}
+.strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(14px,1fr);gap:2px;min-width:560px}
+.cell{height:44px;border:0;padding:0;cursor:pointer;border-radius:2px;position:relative}
+.cell.go{background:var(--go)} .cell.caution{background:var(--warn)} .cell.nogo{background:var(--stop);opacity:.55} .cell.na{background:var(--rule)}
+.cell.sel{outline:3px solid var(--magenta);outline-offset:1px;z-index:1}
+.cell.dark{background-image:repeating-linear-gradient(45deg,transparent 0 3px,rgba(0,0,0,.28) 3px 5px)}
+.cell:focus-visible{outline:3px solid var(--ink);outline-offset:1px}
+.axis{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(14px,1fr);gap:2px;min-width:560px;font-family:var(--f-data);font-size:.66rem;color:var(--ink-2);margin-top:3px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.8rem;color:var(--ink-2);margin-top:8px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-1px;margin-right:4px}
+
+.alerts{display:grid;gap:6px}
+.alert{padding:8px 12px;border-left:4px solid;font-size:.95rem}
+.alert.go{border-color:var(--go);background:var(--go-bg)} .alert.caution{border-color:var(--warn);background:var(--warn-bg)} .alert.nogo{border-color:var(--stop);background:var(--stop-bg)}
+
+/* sections */
+section{margin-top:28px}
+.sec-h{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid var(--ink);padding-bottom:4px;margin-bottom:12px}
+.sec-h .n{font-family:var(--f-data);font-size:.8rem;color:var(--magenta)}
+.sec-h h2{font-size:1.15rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.sec-h .sub{margin-left:auto;font-size:.82rem;color:var(--ink-2)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+label.f{display:grid;gap:3px;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:600;min-width:0}
+input,select,textarea{font:inherit;font-size:1rem;text-transform:none;letter-spacing:0;color:var(--ink);background:var(--card);border:1px solid var(--rule);border-radius:3px;padding:8px 9px;width:100%;min-width:0}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--magenta);outline-offset:1px}
+input.mono{font-family:var(--f-data)}
+.btn{font:inherit;font-weight:600;font-size:.92rem;border:1px solid var(--ink);background:var(--card);color:var(--ink);padding:8px 12px;border-radius:3px;cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper)}
+.btn.small{padding:4px 9px;font-size:.82rem}
+.btn:hover{border-color:var(--magenta)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.note{font-size:.85rem;color:var(--ink-2)}
+.msg{font-size:.88rem;padding:6px 10px;background:var(--sea);border-radius:3px}
+.msg:empty{display:none}
+
+.tbl-wrap{overflow-x:auto;border:1px solid var(--rule);background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);text-align:left;font-weight:600;padding:7px 8px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--rule);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right}
+td input{padding:5px 6px;font-size:.9rem}
+.ok{color:var(--go);font-weight:600} .bad{color:var(--stop);font-weight:600} .meh{color:var(--warn);font-weight:600}
+
+.chart{background:var(--sea);border:1px solid var(--rule);padding:6px 0 0}
+.chart svg{display:block;width:100%;height:auto}
+
+.wp-name{font-family:var(--f-place);font-style:italic}
+.check{display:grid;gap:4px}
+.check label{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;background:var(--card);border:1px solid var(--rule);cursor:pointer}
+.check input{width:20px;height:20px;flex:none;margin:1px 0 0;accent-color:var(--magenta)}
+.check label.done span{color:var(--ink-2);text-decoration:line-through}
+.check h3{font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--magenta);margin:10px 0 2px}
+.sun{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:520px){.sun{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sun div{border-top:2px solid var(--ink);padding-top:4px}
+.sun dt{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+.sun dd{margin:0;font-family:var(--f-data);font-size:1.15rem}
+details summary{cursor:pointer;font-weight:600}
+.tag{font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:2px;background:var(--magenta-soft);color:var(--magenta);font-weight:600}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <div class="bar">
+    <div class="route"><b id="barRoute">—</b><span id="barSub">—</span></div>
+    <span class="pill" id="barPill">—</span>
+  </div>
+
+  <nav class="voyage" aria-label="Voyage legs">
+    <div class="voyage-head"><span class="eyebrow" id="voyageTitle">Voyage</span><span class="note mono" id="voyageSum"></span></div>
+    <div class="legs-scroll"><div class="legs" id="legs"></div></div>
+  </nav>
+
+  <div class="hero">
+    <div class="eyebrow" id="heroEyebrow">Passage plan</div>
+    <h1 id="heroTitle">—</h1>
+    <dl class="facts" id="facts"></dl>
+    <div class="window">
+      <div class="head">
+        <span class="eyebrow">Departure window · tap a slot to plan it</span>
+        <span class="note mono" id="winSel"></span>
+      </div>
+      <div class="strip-scroll"><div class="strip" id="strip"></div><div class="axis" id="axis"></div></div>
+      <div class="legend">
+        <span><i style="background:var(--go)"></i>Good to go</span>
+        <span><i style="background:var(--warn)"></i>Caution</span>
+        <span><i style="background:var(--stop);opacity:.55"></i>Not enough water</span>
+        <span><i style="background:var(--ink-2);background-image:repeating-linear-gradient(45deg,transparent 0 3px,rgba(0,0,0,.35) 3px 5px)"></i>Arrives after dark</span>
+      </div>
+    </div>
+    <div class="alerts" id="alerts"></div>
+  </div>
+
+  <section id="s-passage">
+    <div class="sec-h"><span class="n">01</span><h2>Passage</h2></div>
+    <div class="grid">
+      <label class="f">From<select id="from"></select></label>
+      <label class="f">To<select id="to"></select></label>
+      <label class="f">Date<input type="date" id="date"></label>
+      <label class="f">Depart<input type="time" id="depart" step="900"></label>
+    </div>
+    <div class="grid" id="customFromBox" hidden style="margin-top:10px">
+      <label class="f">Start name<input id="cfName" placeholder="e.g. Anchored off Bradwell"></label>
+      <label class="f">Start position<input id="cfPos" class="mono" placeholder="51 37.6N 000 48.5E"></label>
+    </div>
+    <div class="grid" id="customToBox" hidden style="margin-top:10px">
+      <label class="f">Destination name<input id="ctName" placeholder="e.g. Pin Mill"></label>
+      <label class="f">Destination position<input id="ctPos" class="mono" placeholder="51 59.7N 001 12.6E"></label>
+    </div>
+    <div class="msg" id="routeMsg" style="margin-top:10px"></div>
+    <details id="pasteBox" style="margin-top:10px">
+      <summary>Type or paste waypoints</summary>
+      <p class="note">One per line: name, position, and optional chart depth in metres (negative for drying). Positions as <span class="mono">51 41.9N 001 08.4E</span> or decimal <span class="mono">51.698, 1.140</span>. Start and destination come from above, so list only the marks in between.</p>
+      <textarea id="pasteWps" rows="6" class="mono" placeholder="Whitaker Beacon, 51 40.0N 001 06.0E&#10;Swin Spitway, 51 41.9N 001 08.4E, 1.0&#10;Medusa, 51 51.2N 001 20.5E"></textarea>
+      <div class="row" style="margin-top:8px"><button class="btn small primary" id="pasteApply" type="button">Use these waypoints</button><button class="btn small" id="pasteFill" type="button">Copy current route into the box</button></div>
+    </details>
+    <div class="row" style="margin-top:10px">
+      <button class="btn small" id="reverse" type="button">⇄ Reverse route</button>
+      <button class="btn small" id="delLeg" type="button">Remove this leg</button>
+      <button class="btn small" id="resetAll" type="button">Start over</button>
+      <label class="btn small primary" for="gpx">Import GPX route</label>
+      <input type="file" id="gpx" accept=".gpx,application/gpx+xml" hidden>
+      <button class="btn small" id="gpsBtn" type="button">Where am I on the route?</button>
+      <button class="btn small" id="savePlan" type="button">Save plan</button>
+      <select id="savedPlans" style="width:auto"><option value="">Saved plans…</option></select>
+    </div>
+    <div class="alert nogo" id="resetConfirm" hidden style="margin-top:8px">
+      <p style="margin:0 0 8px">Clear every leg, route, waypoint, tide and wind entry and untick the checklist? Your boat details, API key and saved plans are kept.</p>
+      <div class="row"><button class="btn small primary" id="resetYes" type="button">Clear everything</button><button class="btn small" id="resetNo" type="button">Cancel</button></div>
+    </div>
+    <div class="msg" id="passMsg" style="margin-top:8px"></div>
+  </section>
+
+  <section id="s-boat">
+    <div class="sec-h"><span class="n">02</span><h2>Boat</h2><span class="sub" id="boatSub"></span></div>
+    <div class="grid">
+      <label class="f">Name / type<input id="bName"></label>
+      <label class="f">Draught (m)<input id="bDraught" class="mono" type="number" step="0.05" inputmode="decimal"></label>
+      <label class="f">Speed thru water (kn)<input id="bSpeed" class="mono" type="number" step="0.1" inputmode="decimal"></label>
+      <label class="f">Min under-keel (m)<input id="bUkc" class="mono" type="number" step="0.1" inputmode="decimal"></label>
+    </div>
+  </section>
+
+  <section id="s-tides">
+    <div class="sec-h"><span class="n">03</span><h2>Tides</h2><span class="sub" id="tideSrc"></span></div>
+    <div class="chart"><svg id="tideSvg" viewBox="0 0 700 220" role="img" aria-label="Tidal height curve with passage marked"></svg></div>
+    <div class="tbl-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>Event</th><th>Date</th><th>Time</th><th class="num">Height (m)</th><th></th></tr></thead>
+      <tbody id="tideRows"></tbody></table></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" id="addHW" type="button">+ HW</button>
+      <button class="btn small" id="addLW" type="button">+ LW</button>
+      <button class="btn small primary" id="fetchTides" type="button">Fetch live tides</button>
+    </div>
+    <div class="msg" id="tideMsg" style="margin-top:8px"></div>
+    <div class="alert caution" id="streamNote" hidden style="margin-top:8px">The stream settings below are for the Thames Estuary. For this area, set the flood direction and rates from your tidal atlas.</div>
+    <details style="margin-top:12px">
+      <summary>Tidal stream model</summary>
+      <p class="note">Streams are modelled from the hour relative to HW at the departure port. Flood runs HW−6 to HW, ebb HW to HW+6, peaking mid-way. Rates scale between neaps and springs from today's range. Set these from your tidal atlas.</p>
+      <div class="grid">
+        <label class="f">Flood sets toward (°T)<input id="sFlood" class="mono" type="number" min="0" max="359"></label>
+        <label class="f">Spring rate (kn)<input id="sSpring" class="mono" type="number" step="0.1"></label>
+        <label class="f">Neap rate (kn)<input id="sNeap" class="mono" type="number" step="0.1"></label>
+        <label class="f">Stream turns (min after HW)<input id="sOffset" class="mono" type="number" step="5"></label>
+        <label class="f">Spring range (m)<input id="sSR" class="mono" type="number" step="0.1"></label>
+        <label class="f">Neap range (m)<input id="sNR" class="mono" type="number" step="0.1"></label>
+      </div>
+    </details>
+  </section>
+
+  <section id="s-weather">
+    <div class="sec-h"><span class="n">04</span><h2>Wind &amp; weather</h2><span class="sub" id="wxSrc"></span></div>
+    <div class="grid">
+      <label class="f">Wind from (°T)<input id="wFrom" class="mono" type="number" min="0" max="359"></label>
+      <label class="f">Mean (kn)<input id="wKn" class="mono" type="number" step="1"></label>
+      <label class="f">Gusts (kn)<input id="wGust" class="mono" type="number" step="1"></label>
+      <label class="f">Wind-over-tide alert from (kn)<input id="wWot" class="mono" type="number" step="1"></label>
+    </div>
+    <div class="row" style="margin-top:8px"><button class="btn small primary" id="fetchWx" type="button">Fetch hourly forecast</button></div>
+    <div class="msg" id="wxMsg" style="margin-top:8px"></div>
+  </section>
+
+  <section id="s-route">
+    <div class="sec-h"><span class="n">05</span><h2>Waypoints &amp; pilotage</h2><span class="sub" id="routeSub"></span></div>
+    <p class="note">Give a waypoint a charted depth (negative for a drying height) and it becomes a depth check at your ETA. Notes are your pilotage reminders.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>#</th><th>Waypoint</th><th>Position</th><th class="num">Chart depth</th><th>ETA</th><th class="num">Clearance</th><th>Stream</th><th></th></tr></thead>
+      <tbody id="wpRows"></tbody></table></div>
+    <div class="row" style="margin-top:8px"><button class="btn small" id="addWp" type="button">+ Waypoint before destination</button></div>
+    <div id="wpEdit" style="margin-top:12px"></div>
+  </section>
+
+  <section id="s-bail">
+    <div class="sec-h"><span class="n">06</span><h2>Bail-out ports</h2><span class="sub">within 12 nm of the track</span></div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Port</th><th class="num">Off track</th><th>Nearest after</th><th>Access</th></tr></thead>
+      <tbody id="bailRows"></tbody></table></div>
+    <p class="note">Access notes are a starting point. Check the almanac for entrance depths and opening times.</p>
+  </section>
+
+  <section id="s-sun">
+    <div class="sec-h"><span class="n">07</span><h2>Daylight</h2><span class="sub" id="sunSub"></span></div>
+    <dl class="sun" id="sun"></dl>
+  </section>
+
+  <section id="s-check">
+    <div class="sec-h"><span class="n">08</span><h2>Before you slip</h2><span class="sub" id="checkSub"></span></div>
+    <div class="check" id="check"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="newCheck" placeholder="Add a check…" style="flex:1;min-width:160px">
+      <button class="btn small" id="addCheck" type="button">Add</button>
+      <button class="btn small" id="resetCheck" type="button">Untick all</button>
+    </div>
+  </section>
+
+  <section id="s-settings">
+    <div class="sec-h"><span class="n">09</span><h2>Live data</h2></div>
+    <div class="grid">
+      <label class="f">Admiralty API key<input id="kAdm" class="mono" type="password" autocomplete="off"></label>
+      <label class="f">Tide station name<input id="kStation"></label>
+      <label class="f">Relay URL (optional)<input id="kRelay" class="mono" placeholder="Leave blank to call Admiralty directly"></label>
+    </div>
+    <p class="note">The key stays on this phone. Tides come from the UKHO Admiralty UK Tidal API (Discovery tier, 7 days ahead) and wind from Open‑Meteo, which needs no key. Fetch both in harbour: they stay saved for use offline at sea. If Admiralty refuses direct requests, paste a relay URL above.</p>
+    <p class="note mono" id="appVer">Grampian Passage Planner · v1</p>
+  </section>
+</div>
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const D2R=Math.PI/180, R2D=180/Math.PI;
+const store={get(k,d){try{const v=localStorage.getItem('pp.'+k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem('pp.'+k,JSON.stringify(v))}catch(e){}}};
+
+// ---------- reference data ----------
+// Marinas and harbours by region. Positions are approximate (to roughly 0.5 nm): fine for planning, not for pilotage.
+const P=(g,id,name,lat,lon,access)=>({g,id,name,lat,lon,access:access||'Check almanac'});
+const PORTS=[
+ P('Thames & Essex','stkats','St Katharine Docks, London',51.5070,-0.0720,'Lock, booked times'),
+ P('Thames & Essex','limehouse','Limehouse Marina',51.5110,-0.0350,'Lock, booked times'),
+ P('Thames & Essex','chatham','Chatham Maritime',51.4000,0.5400,'Lock'),
+ P('Thames & Essex','gillingham','Gillingham Marina',51.3920,0.5640,'Lock, check'),
+ P('Thames & Essex','queenborough','Queenborough',51.4180,0.7390,'All tide, buoys'),
+ P('Thames & Essex','burnham','Burnham-on-Crouch',51.6265,0.8090,'All tide (marina)'),
+ P('Thames & Essex','bradwell','Bradwell Marina',51.7380,0.8920,'Tidal entrance, check'),
+ P('Thames & Essex','heybridge','Heybridge Basin',51.7290,0.7050,'Lock, around HW'),
+ P('Thames & Essex','tollesbury','Tollesbury',51.7620,0.8480,'Tidal marina, check'),
+ P('Thames & Essex','westmersea','West Mersea',51.7760,0.9130,'Tidal, check'),
+ P('Thames & Essex','brightlingsea','Brightlingsea',51.8050,1.0200,'All tide, pontoons'),
+ P('Thames & Essex','titchmarsh','Titchmarsh Marina',51.8640,1.2700,'Check depth over sill'),
+ P('Suffolk & Norfolk','harwich','Harwich (Ha\'penny Pier)',51.9460,1.2890,'All tide'),
+ P('Suffolk & Norfolk','shotley','Shotley Marina',51.9550,1.2750,'Lock, check hours'),
+ P('Suffolk & Norfolk','levington','Suffolk Yacht Harbour, Levington',51.9950,1.2710,'All tide, check'),
+ P('Suffolk & Norfolk','woolverstone','Woolverstone Marina',51.9970,1.1950),
+ P('Suffolk & Norfolk','ipswich','Ipswich',52.0500,1.1600,'Lock, check hours'),
+ P('Suffolk & Norfolk','deben','Felixstowe Ferry (Deben)',51.9870,1.3950,'Shifting bar, near HW'),
+ P('Suffolk & Norfolk','woodbridge','Woodbridge',52.0900,1.3200,'Tidal, near HW'),
+ P('Suffolk & Norfolk','southwold','Southwold',52.3230,1.6800,'Tidal, check'),
+ P('Suffolk & Norfolk','lowestoft','Lowestoft',52.4720,1.7510,'All tide'),
+ P('Suffolk & Norfolk','wells','Wells-next-the-Sea',52.9550,0.8500,'Near HW only'),
+ P('North East','grimsby','Grimsby',53.5800,-0.0700,'Lock'),
+ P('North East','hull','Hull Marina',53.7400,-0.3300,'Lock'),
+ P('North East','whitby','Whitby',54.4860,-0.6140,'Bridge, check'),
+ P('North East','hartlepool','Hartlepool Marina',54.6900,-1.2000,'Lock'),
+ P('North East','sunderland','Sunderland',54.9180,-1.3600,'All tide'),
+ P('North East','royalquays','Royal Quays, North Shields',55.0000,-1.4600,'Lock'),
+ P('North East','amble','Amble',55.3350,-1.5850,'Check sill'),
+ P('North East','eyemouth','Eyemouth',55.8710,-2.0900,'Check'),
+ P('Kent & Dover Strait','ramsgate','Ramsgate',51.3280,1.4200,'All tide'),
+ P('Kent & Dover Strait','dover','Dover',51.1170,1.3200,'Call Port Control'),
+ P('Sussex','eastbourne','Sovereign Harbour, Eastbourne',50.7900,0.3300,'Lock'),
+ P('Sussex','newhaven','Newhaven',50.7870,0.0570,'All tide'),
+ P('Sussex','brighton','Brighton Marina',50.8110,-0.1020,'All tide, check depth'),
+ P('Sussex','shoreham','Shoreham',50.8300,-0.2450,'Lock'),
+ P('Sussex','littlehampton','Littlehampton',50.8070,-0.5400,'Tidal, check'),
+ P('Sussex','chichester','Chichester Marina',50.8020,-0.8220,'Lock, check'),
+ P('Solent','gosport','Haslar Marina, Gosport',50.7920,-1.1150,'All tide'),
+ P('Solent','gunwharf','Gunwharf Quays, Portsmouth',50.7960,-1.1080),
+ P('Solent','bembridge','Bembridge',50.6930,-1.0980,'Tidal, check'),
+ P('Solent','hamble','Hamble (Port Hamble)',50.8610,-1.3120,'All tide'),
+ P('Solent','mercury','Mercury Yacht Harbour',50.8680,-1.3100,'All tide'),
+ P('Solent','oceanvillage','Ocean Village, Southampton',50.8940,-1.3910,'All tide'),
+ P('Solent','cowes','Cowes',50.7620,-1.2980,'All tide'),
+ P('Solent','yarmouth','Yarmouth (IoW)',50.7070,-1.5010,'All tide'),
+ P('Solent','lymington','Lymington',50.7520,-1.5330,'All tide'),
+ P('Dorset','poole','Poole Quay',50.7120,-1.9870,'All tide'),
+ P('Dorset','swanage','Swanage',50.6090,-1.9520,'Anchorage / pier'),
+ P('Dorset','weymouth','Weymouth',50.6080,-2.4520,'Bridge, check'),
+ P('Dorset','portland','Portland Marina',50.5730,-2.4530,'All tide'),
+ P('Devon & Cornwall','exmouth','Exmouth',50.6160,-3.4200,'Tidal, check'),
+ P('Devon & Cornwall','torquay','Torquay',50.4590,-3.5280,'All tide'),
+ P('Devon & Cornwall','brixham','Brixham',50.3970,-3.5070,'All tide'),
+ P('Devon & Cornwall','dartmouth','Dartmouth',50.3510,-3.5780,'All tide'),
+ P('Devon & Cornwall','salcombe','Salcombe',50.2360,-3.7700,'Bar, check in swell'),
+ P('Devon & Cornwall','plymouth','Plymouth (Queen Anne\'s Battery)',50.3640,-4.1330,'All tide'),
+ P('Devon & Cornwall','mayflower','Mayflower Marina, Plymouth',50.3640,-4.1680,'All tide'),
+ P('Devon & Cornwall','fowey','Fowey',50.3340,-4.6350,'All tide'),
+ P('Devon & Cornwall','falmouth','Falmouth',50.1530,-5.0670,'All tide'),
+ P('Devon & Cornwall','penzance','Penzance',50.1180,-5.5300,'Dock gate, near HW'),
+ P('Channel Islands & France','stpeterport','St Peter Port, Guernsey',49.4560,-2.5350,'Sill, check'),
+ P('Channel Islands & France','cherbourg','Cherbourg',49.6450,-1.6180,'All tide'),
+ P('Channel Islands & France','boulogne','Boulogne',50.7270,1.5980,'All tide'),
+ P('Channel Islands & France','calais','Calais',50.9650,1.8600,'Bridge / gate, check'),
+ P('Channel Islands & France','dunkerque','Dunkerque',51.0500,2.3700,'All tide'),
+ P('Belgium & Netherlands','nieuwpoort','Nieuwpoort',51.1500,2.7300,'All tide'),
+ P('Belgium & Netherlands','ostend','Ostend',51.2350,2.9250,'All tide'),
+ P('Belgium & Netherlands','vlissingen','Vlissingen',51.4430,3.5970,'Lock, check')
+];
+const ESTUARY=['Thames & Essex','Suffolk & Norfolk'];
+// Route library. Positions are approximate starting points: check against your chart or replace with a Navionics GPX.
+// Each route also works in reverse.
+const EX='Approx. position — check chart';
+const CROUCH_OUT=[
+ {name:'Outer Crouch',lat:51.6130,lon:0.9550,depth:null,note:EX},
+ {name:'Whitaker Beacon',lat:51.6670,lon:1.1000,depth:null,note:EX},
+ {name:'Swin Spitway',lat:51.6980,lon:1.1400,depth:1.0,note:'Example depth — check current chart'}];
+const WALLET_N=[
+ {name:'Wallet off Clacton',lat:51.7600,lon:1.2000,depth:null,note:EX},
+ {name:'Wallet off Frinton',lat:51.8300,lon:1.2900,depth:null,note:EX},
+ {name:'Medusa',lat:51.8530,lon:1.3420,depth:null,note:EX}];
+const ROUTES=[
+ {a:'burnham',b:'brightlingsea',wps:[...CROUCH_OUT,{name:'Colne Bar',lat:51.7600,lon:1.0500,depth:null,note:EX}]},
+ {a:'burnham',b:'harwich',wps:[...CROUCH_OUT,...WALLET_N,{name:'Harwich entrance',lat:51.9370,lon:1.3200,depth:null,note:'Keep out of the deep-water channel; '+EX}]},
+ {a:'burnham',b:'levington',wps:[...CROUCH_OUT,...WALLET_N,{name:'Harwich entrance',lat:51.9370,lon:1.3200,depth:null,note:'Keep out of the deep-water channel; '+EX},{name:'Shotley Spit',lat:51.9560,lon:1.2900,depth:null,note:EX}]},
+ {a:'burnham',b:'shotley',wps:[...CROUCH_OUT,...WALLET_N,{name:'Harwich entrance',lat:51.9370,lon:1.3200,depth:null,note:'Keep out of the deep-water channel; '+EX}]},
+ {a:'burnham',b:'deben',wps:[...CROUCH_OUT,...WALLET_N,{name:'Woodbridge Haven (Deben approach)',lat:51.9750,lon:1.3950,depth:null,note:'Bar shifts — get the latest Deben bar plan. Add a depth here.'}]},
+ {a:'burnham',b:'titchmarsh',wps:[...CROUCH_OUT,...WALLET_N,{name:'Pye End (Walton Channel)',lat:51.9180,lon:1.2950,depth:null,note:EX}]}
+];
+function template(from,to){for(const r of ROUTES){if(r.a===from&&r.b===to)return r.wps.map(w=>({...w}));if(r.b===from&&r.a===to)return r.wps.slice().reverse().map(w=>({...w}))}return null}
+const EXAMPLE_ROUTE={wps:template('burnham','brightlingsea')};
+
+// Position parser: accepts "51.6265, 0.809", "51 37.6N 000 48.5E", "51°37.6′N 0°48.5′E"
+function parsePos(s){
+ s=String(s).trim().toUpperCase().replace(/[°′'"]/g,' ');
+ const dm=s.match(/(\d{1,2})\s+(\d{1,2}(?:\.\d+)?)\s*([NS])[\s,]+(\d{1,3})\s+(\d{1,2}(?:\.\d+)?)\s*([EW])/);
+ if(dm){let la=+dm[1]+dm[2]/60,lo=+dm[4]+dm[5]/60;if(dm[3]==='S')la=-la;if(dm[6]==='W')lo=-lo;return{lat:la,lon:lo}}
+ const dd=s.match(/(-?\d+(?:\.\d+)?)\s*([NS])?[\s,]+(-?\d+(?:\.\d+)?)\s*([EW])?/);
+ if(dd){let la=+dd[1],lo=+dd[3];if(dd[2]==='S')la=-Math.abs(la);if(dd[4]==='W')lo=-Math.abs(lo);if(Math.abs(la)<=90&&Math.abs(lo)<=180)return{lat:la,lon:lo}}
+ return null}
+const DEFAULT_CHECK=[
+ {g:'Engine · WOBBLE',t:'Water — raw-water seacock open, coolant level'},
+ {g:'Engine · WOBBLE',t:'Oil — engine and gearbox'},
+ {g:'Engine · WOBBLE',t:'Belts — alternator / water pump tension'},
+ {g:'Engine · WOBBLE',t:'Bilge — dry, pump works'},
+ {g:'Engine · WOBBLE',t:'Leaks — fuel, coolant, stern gland'},
+ {g:'Engine · WOBBLE',t:'Exhaust — water flowing after start'},
+ {g:'Rig',t:'Main halyard rigged and running free'},
+ {g:'Rig',t:'Reefing lines led, sheets and winch handles out'},
+ {g:'Safety',t:'Lifejackets and tethers on'},
+ {g:'Safety',t:'VHF radio check'},
+ {g:'Safety',t:'Passage plan left with someone ashore'},
+ {g:'Navigation',t:'Route loaded in Navionics'},
+ {g:'Navigation',t:'Inshore waters forecast read'}
+].map(c=>({...c,done:false}));
+
+// ---------- state ----------
+function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function exampleTides(date){
+ // Example only — clearly labelled in the UI. Replace with live or EasyTide data.
+ const base=new Date('2026-10-20T06:25').getTime(),day=new Date(date+'T00:00').getTime();
+ const P=12.42*3.6e6,shift=((day-new Date('2026-10-20T00:00').getTime())/864e5*50*60000)%P;
+ let t=base+shift;while(t>day-6*3.6e6)t-=P;while(t<day-6*3.6e6)t+=P;t-=P/2;
+ const out=[];let hw=false;
+ for(let k=0;k<12;k++){const d=new Date(t+k*P/2);hw=k%2===1;if(d.getTime()<day-7*3.6e6||d.getTime()>day+36*3.6e6)continue;
+  out.push({type:hw?'HW':'LW',t:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'),h:hw?4.9:0.5})}
+ return out;
+}
+const def={
+ boat:{name:'Grampian 234',draught:1.5,speed:5,ukc:0.5},
+ plan:{from:'burnham',to:'brightlingsea',date:todayStr(),depart:'08:00',wps:EXAMPLE_ROUTE.wps.map(w=>({...w}))},
+ tides:null, tideSource:'example',
+ stream:{flood:255,spring:2.0,neap:1.0,offset:15,sr:4.8,nr:2.8},
+ wind:{from:225,kn:12,gust:18,wot:12}, hourly:null, wxSource:'manual',
+ keys:{adm:'',station:'Burnham-on-Crouch'},
+ check:DEFAULT_CHECK
+};
+let S=store.get('state',null)||JSON.parse(JSON.stringify(def));
+for(const k of Object.keys(def)) if(S[k]===undefined) S[k]=JSON.parse(JSON.stringify(def[k]));
+if(!S.tides||!S.tides.length){S.tides=exampleTides(S.plan.date);S.tideSource='example'}
+// ---------- voyage legs ----------
+// Each leg keeps its own route, date, tides, stream model and wind. Boat, API key and checklist are shared.
+const LEG_KEYS=['plan','tides','tideSource','stream','hourly','wind'];
+const clone=o=>JSON.parse(JSON.stringify(o));
+function snapshot(){const o={};LEG_KEYS.forEach(k=>o[k]=clone(S[k]));o.station=S.keys.station;return o}
+function loadLeg(i){const L=clone(S.legs[i]);LEG_KEYS.forEach(k=>S[k]=L[k]);S.keys.station=L.station||S.keys.station}
+if(!Array.isArray(S.legs)||!S.legs.length){S.legs=[snapshot()];S.active=0}
+S.active=Math.min(S.active||0,S.legs.length-1);loadLeg(S.active);
+function legInfo(i){
+ const cur=snapshot();if(i!==S.active)loadLeg(i);
+ const R=route(),dep=localDate(S.plan.date,S.plan.depart),sim=simulate(dep);
+ const total=R.slice(1).reduce((s,p,k)=>s+dist(R[k],p),0);
+ const r={from:R[0].name,to:R[R.length-1].name,fromId:S.plan.from,toId:S.plan.to,fromPos:R[0],toPos:R[R.length-1],date:S.plan.date,dep,arrive:sim.arrive,total,status:total<0.05?'na':sim.status,example:S.tideSource==='example'};
+ if(i!==S.active){LEG_KEYS.forEach(k=>S[k]=cur[k]);S.keys.station=cur.station}
+ return r}
+function save(){if(S.legs)S.legs[S.active]=snapshot();store.set('state',S)}
+
+// ---------- geo ----------
+function dist(a,b){const R=3440.065;const p1=a.lat*D2R,p2=b.lat*D2R,dp=p2-p1,dl=(b.lon-a.lon)*D2R;const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function brg(a,b){const p1=a.lat*D2R,p2=b.lat*D2R,dl=(b.lon-a.lon)*D2R;const y=Math.sin(dl)*Math.cos(p2),x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);return (Math.atan2(y,x)*R2D+360)%360}
+function interp(a,b,f){return{lat:a.lat+(b.lat-a.lat)*f,lon:a.lon+(b.lon-a.lon)*f}}
+function dm(v,pos,neg){const s=v<0?neg:pos;v=Math.abs(v);const d=Math.floor(v);const m=(v-d)*60;return d+'°'+m.toFixed(1).padStart(4,'0')+'′'+s}
+function fmtPos(p){return dm(p.lat,'N','S')+' '+dm(p.lon,'E','W')}
+function port(id,end){if(id==='custom'){const c=(end==='to'?S.plan.cTo:S.plan.cFrom)||{name:'Custom position',lat:51.6265,lon:0.8090};return{id:'custom',access:'',...c}}return PORTS.find(p=>p.id===id)||PORTS[0]}
+function route(){const f=port(S.plan.from,'from'),t=port(S.plan.to,'to');return [{name:f.name,lat:f.lat,lon:f.lon,depth:null,port:true},...S.plan.wps,{name:t.name,lat:t.lat,lon:t.lon,depth:null,port:true}]}
+
+// ---------- time ----------
+const pad=n=>String(n).padStart(2,'0');
+const hm=d=>pad(d.getHours())+':'+pad(d.getMinutes());
+const dur=m=>Math.floor(m/60)+'h '+pad(Math.round(m%60))+'m';
+function localDate(date,time){return new Date(date+'T'+time)}
+
+// ---------- tides ----------
+function events(){return S.tides.map(e=>({...e,d:new Date(e.t)})).filter(e=>!isNaN(e.d)).sort((a,b)=>a.d-b.d)}
+function heightAt(t){const ev=events();for(let i=0;i<ev.length-1;i++){const a=ev[i],b=ev[i+1];if(t>=a.d&&t<=b.d){const f=(t-a.d)/(b.d-a.d);return a.h+(b.h-a.h)*(1-Math.cos(Math.PI*f))/2}}return null}
+function nearestHW(t){let best=null;for(const e of events()) if(e.type==='HW'&&(!best||Math.abs(e.d-t)<Math.abs(best.d-t))) best=e;return best}
+function rangeNear(hw){const ev=events();const i=ev.indexOf(ev.find(e=>e.t===hw.t));const n=[ev[i-1],ev[i+1]].filter(e=>e&&e.type==='LW');if(!n.length)return (S.stream.sr+S.stream.nr)/2;return hw.h-n.reduce((s,e)=>s+e.h,0)/n.length}
+function streamAt(t){const hw=nearestHW(t);if(!hw)return{rate:0,to:0,phase:null};const h=(t-hw.d)/3.6e6-S.stream.offset/60;const st=S.stream;const r=rangeNear(hw);const f=Math.max(0,Math.min(1.2,(r-st.nr)/(st.sr-st.nr||1)));const peak=st.neap+f*(st.spring-st.neap);let rate=0,to=st.flood,phase='';if(h<0&&h>-6.2){rate=peak*Math.sin(Math.PI*(h+6.2)/6.2);to=st.flood;phase='Flood'}else if(h>=0&&h<6.2){rate=peak*Math.sin(Math.PI*h/6.2);to=(st.flood+180)%360;phase='Ebb'}return{rate:Math.max(0,rate),to,phase,hrs:(t-hw.d)/3.6e6}}
+
+// ---------- wind ----------
+function windAt(t){if(S.hourly&&S.hourly.time){const ts=t.getTime();let bi=-1,bd=Infinity;S.hourly.time.forEach((x,i)=>{const d=Math.abs(new Date(x).getTime()-ts);if(d<bd){bd=d;bi=i}});if(bi>=0&&bd<3*3.6e6)return{from:S.hourly.dir[bi],kn:S.hourly.kn[bi],gust:S.hourly.gust[bi]}}return{from:S.wind.from,kn:S.wind.kn,gust:S.wind.gust}}
+function angDiff(a,b){let d=Math.abs(a-b)%360;return d>180?360-d:d}
+
+// ---------- simulation ----------
+function simulate(dep){
+ const R=route(),V=S.boat.speed,step=5;let t=new Date(dep);const out={etas:[t],checks:[],wot:0,foul:0,samples:[],ok:true,minClear:Infinity,maxWind:0};
+ for(let i=0;i<R.length-1;i++){
+  const a=R[i],b=R[i+1],c=brg(a,b);let rem=dist(a,b);let guard=0;
+  while(rem>0.001&&guard++<2000){
+   const s=streamAt(t),w=windAt(t);const rel=(s.to-c)*D2R;const along=s.rate*Math.cos(rel),cross=s.rate*Math.sin(rel);
+   let sog=(Math.abs(cross)<V?Math.sqrt(V*V-cross*cross):0)+along;if(sog<0.5){sog=0.5;out.foul+=step}
+   const wotOpp=angDiff((w.from+180)%360,s.to)>120&&s.rate>=0.8&&w.kn>=S.wind.wot;if(wotOpp)out.wot+=step;
+   out.maxWind=Math.max(out.maxWind,w.gust||w.kn);
+   const adv=sog*step/60;const frac=Math.min(1,adv/rem);
+   out.samples.push({t:new Date(t),leg:i,sog,s,wot:wotOpp,pos:interp(a,b,1-(rem-Math.min(adv,rem))/dist(a,b))});
+   if(adv>=rem){t=new Date(t.getTime()+step*60000*(rem/adv));rem=0}else{rem-=adv;t=new Date(t.getTime()+step*60000)}
+  }
+  out.etas.push(new Date(t));
+  const wp=R[i+1];if(wp.depth!==null&&wp.depth!==undefined&&wp.depth!==''){const h=heightAt(t);const clear=h===null?null:h+Number(wp.depth)-S.boat.draught;const ok=clear!==null&&clear>=S.boat.ukc;if(!ok)out.ok=false;if(clear!==null)out.minClear=Math.min(out.minClear,clear);out.checks.push({i:i+1,name:wp.name,eta:new Date(t),h,clear,ok})}
+ }
+ out.arrive=t;out.mins=(t-dep)/60000;
+ const sun=sunTimes(new Date(S.plan.date+'T12:00'),R[0].lat,R[0].lon);
+ out.dark=sun&&(t>sun.set||dep<sun.rise);
+ out.status=!out.ok?'nogo':(out.wot>=20||out.dark||out.foul>=30||out.maxWind>=25)?'caution':'go';
+ return out;
+}
+
+// ---------- sun ----------
+function sunTimes(date,lat,lon){
+ const rad=D2R;const J=date.getTime()/864e5+2440587.5;const n=Math.round(J-2451545.0009-(-lon)/360);const Js=2451545.0009+(-lon)/360+n;
+ const M=(357.5291+0.98560028*(Js-2451545))%360;const C=1.9148*Math.sin(M*rad)+0.02*Math.sin(2*M*rad)+0.0003*Math.sin(3*M*rad);
+ const L=(M+102.9372+C+180)%360;const Jt=Js+0.0053*Math.sin(M*rad)-0.0069*Math.sin(2*L*rad);const dec=Math.asin(Math.sin(L*rad)*Math.sin(23.44*rad));
+ const at=a=>{const cw=(Math.sin(a*rad)-Math.sin(lat*rad)*Math.sin(dec))/(Math.cos(lat*rad)*Math.cos(dec));if(cw<-1||cw>1)return null;const w=Math.acos(cw)*R2D;return[new Date((Jt-w/360-2440587.5)*864e5),new Date((Jt+w/360-2440587.5)*864e5)]};
+ const s=at(-0.833),c=at(-6);if(!s)return null;return{rise:s[0],set:s[1],dawn:c?c[0]:null,dusk:c?c[1]:null,noon:new Date((Jt-2440587.5)*864e5)};
+}
+
+// ---------- render ----------
+function bindInputs(){
+ const sel=(el,v)=>{const gs=[...new Set(PORTS.map(p=>p.g))];el.innerHTML=gs.map(g=>`<optgroup label="${g}">`+PORTS.filter(p=>p.g===g).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')+'</optgroup>').join('')+'<optgroup label="Anywhere else"><option value="custom">Custom position…</option></optgroup>';el.value=v};
+ sel($('from'),S.plan.from);sel($('to'),S.plan.to);
+ const cf=port('custom','from'),ct=port('custom','to');
+ $('cfName').value=S.plan.cFrom?cf.name:'';$('cfPos').value=S.plan.cFrom?fmtPos(cf):'';
+ $('ctName').value=S.plan.cTo?ct.name:'';$('ctPos').value=S.plan.cTo?fmtPos(ct):'';
+ showCustom();
+ $('date').value=S.plan.date;$('depart').value=S.plan.depart;
+ $('bName').value=S.boat.name;$('bDraught').value=S.boat.draught;$('bSpeed').value=S.boat.speed;$('bUkc').value=S.boat.ukc;
+ $('sFlood').value=S.stream.flood;$('sSpring').value=S.stream.spring;$('sNeap').value=S.stream.neap;$('sOffset').value=S.stream.offset;$('sSR').value=S.stream.sr;$('sNR').value=S.stream.nr;
+ $('wFrom').value=S.wind.from;$('wKn').value=S.wind.kn;$('wGust').value=S.wind.gust;$('wWot').value=S.wind.wot;
+ $('kAdm').value=S.keys.adm;$('kStation').value=S.keys.station;$('kRelay').value=S.keys.relay||'';
+ renderSaved();
+}
+function render(){
+ const R=route(),dep=localDate(S.plan.date,S.plan.depart),sim=simulate(dep);
+ const total=R.slice(1).reduce((s,p,i)=>s+dist(R[i],p),0);
+ const f=R[0],t=R[R.length-1];
+ const label={go:'Good to go',caution:'Caution',nogo:'No go'}[sim.status];
+ $('barRoute').textContent=f.name+' → '+t.name;
+ $('barSub').textContent=hm(dep)+' – '+hm(sim.arrive)+' · '+total.toFixed(1)+' nm';
+ const bp=$('barPill');bp.className='pill '+sim.status;bp.textContent=label;
+ const dstr=new Date(S.plan.date+'T12:00').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
+ const nL=S.legs.length;
+ $('heroEyebrow').textContent=(nL>1?'Leg '+(S.active+1)+' of '+nL:'Passage plan')+' · '+dstr;
+ if(nL>1)$('barSub').textContent='Leg '+(S.active+1)+'/'+nL+' · '+$('barSub').textContent;
+ $('heroTitle').innerHTML=`${esc(f.name)} <i>to</i> ${esc(t.name)}`;
+ const has=total>=0.05,avg=has?total/(sim.mins/60):0;
+ $('facts').innerHTML=[['Distance',total.toFixed(1)+' nm'],['Time',has?dur(sim.mins):'—'],['Arrive',has?hm(sim.arrive):'—'],['Avg SOG',has?avg.toFixed(1)+' kn':'—']].map(([a,b])=>`<div><dt>${a}</dt><dd>${b}</dd></div>`).join('');
+
+ // alerts
+ const al=[];
+ if(!has)al.push(['caution','Choose where this leg goes.']);
+ if(S.active>0){const pv=legInfo(S.active-1);if(dist(pv.toPos,R[0])>1)al.push(['caution',`This leg starts at ${R[0].name}, but leg ${S.active} ends at ${pv.to}.`]);
+  const gapH=(dep-pv.arrive)/3.6e6;if(gapH<0)al.push(['nogo',`This leg departs before leg ${S.active} arrives (${hm(pv.arrive)}).`]);}
+ if(S.tideSource==='example')al.push(['caution','Tides shown are example values. Fetch live tides or enter today\'s from EasyTide before relying on this plan.']);
+ sim.checks.forEach(c=>{if(c.clear===null)al.push(['caution',`${c.name}: no tide data at ${hm(c.eta)}.`]);else if(!c.ok)al.push(['nogo',`${c.name}: ${c.clear.toFixed(1)} m under the keel at ${hm(c.eta)} — below your ${S.boat.ukc} m minimum.`])});
+ if(sim.wot>=20)al.push(['caution',`Wind against tide for about ${Math.round(sim.wot/5)*5} min. Expect a short, steep sea.`]);
+ if(sim.foul>=30)al.push(['caution',`Punching a foul stream for about ${Math.round(sim.foul/5)*5} min.`]);
+ if(sim.maxWind>=25)al.push(['caution',`Gusts up to ${Math.round(sim.maxWind)} kn on passage.`]);
+ if(sim.dark)al.push(['caution','Part of the passage is outside daylight.']);
+ if(!al.length)al.push(['go','Enough water at every depth check, no wind-over-tide, arriving in daylight.']);
+ $('alerts').innerHTML=al.map(([c,m])=>`<div class="alert ${c}">${esc(m)}</div>`).join('');
+
+ renderVoyage();
+ renderWindow(dep);renderTides(dep,sim);renderRoute(R,sim);renderBail(R,sim);renderSun(R,sim);renderCheck();
+ $('boatSub').textContent=S.boat.draught+' m draught · '+S.boat.speed+' kn';
+ $('routeSub').textContent=(R.length-2)+' intermediate · '+total.toFixed(1)+' nm';
+ $('tideSrc').innerHTML=S.tideSource==='example'?'<span class="tag">Example data</span>':esc(S.tideSource);
+ $('wxSrc').textContent=S.hourly?'Hourly forecast loaded':'Manual entry';
+ const fp=port(S.plan.from,'from');const outside=fp.g&&!ESTUARY.includes(fp.g);
+ $('streamNote').hidden=!outside;
+ const rk=S.plan.wps.length?(S.plan.routeKind||'library'):'direct';
+ $('routeMsg').innerHTML=rk==='direct'?'<b>Straight line only.</b> No stored route for this pair, so the track is a straight line and may cross sandbanks or land. Add waypoints below, paste them in, or import a Navionics GPX.':rk==='library'?'Using the stored route for this pair, with approximate positions. Check each mark against your chart, or replace the route with your own.':'Using your waypoints.';
+ save();
+}
+function renderWindow(dep){
+ const cells=[],axis=[];const base=localDate(S.plan.date,'04:00');
+ for(let i=0;i<=64;i++){const d=new Date(base.getTime()+i*15*60000);const s=simulate(d);const sel=hm(d)===S.plan.depart;
+  cells.push(`<button class="cell ${s.status}${s.dark?' dark':''}${sel?' sel':''}" data-t="${hm(d)}" title="${hm(d)} → ${hm(s.arrive)}" aria-label="Depart ${hm(d)}, ${s.status}"></button>`);
+  axis.push(`<span>${d.getMinutes()===0&&d.getHours()%2===0?pad(d.getHours()):''}</span>`)}
+ $('strip').innerHTML=cells.join('');$('axis').innerHTML=axis.join('');
+ const s=simulate(dep);$('winSel').textContent='Selected '+S.plan.depart+' → '+hm(s.arrive);
+}
+function renderTides(dep,sim){
+ const ev=events();const day0=localDate(S.plan.date,'00:00').getTime(),span=36*3.6e6;
+ const W=700,H=220,L=36,Rr=10,T=14,B=30;const x=t=>L+(t-day0)/span*(W-L-Rr);
+ const hs=ev.map(e=>e.h);const hmax=Math.max(6,Math.ceil(Math.max(...hs,0)+0.5)),hmin=Math.min(0,Math.floor(Math.min(...hs,0)));
+ const y=h=>T+(hmax-h)/(hmax-hmin)*(H-T-B);
+ let p='',area='';for(let m=0;m<=36*60;m+=10){const t=new Date(day0+m*60000);const h=heightAt(t);if(h===null)continue;const X=x(t).toFixed(1),Y=y(h).toFixed(1);p+=(p?'L':'M')+X+' '+Y}
+ const grid=[];for(let h=hmin;h<=hmax;h++)grid.push(`<line x1="${L}" x2="${W-Rr}" y1="${y(h)}" y2="${y(h)}" stroke="var(--rule)" stroke-width="1"/><text x="${L-6}" y="${y(h)+4}" text-anchor="end" font-size="11" fill="var(--ink-2)" font-family="IBM Plex Mono,monospace">${h}</text>`);
+ for(let hr=0;hr<=36;hr+=6){const X=x(day0+hr*3.6e6);grid.push(`<line x1="${X}" x2="${X}" y1="${T}" y2="${H-B}" stroke="var(--rule)"/><text x="${X}" y="${H-12}" text-anchor="middle" font-size="11" fill="var(--ink-2)" font-family="IBM Plex Mono,monospace">${pad(hr%24)}:00</text>`)}
+ const dl=$('bDraught').value;const draughtLine=`<line x1="${L}" x2="${W-Rr}" y1="${y(S.boat.draught)}" y2="${y(S.boat.draught)}" stroke="var(--ink-2)" stroke-dasharray="4 4"/>`;
+ const x0=x(dep.getTime()),x1=x(sim.arrive.getTime());
+ const band=`<rect x="${x0}" y="${T}" width="${Math.max(2,x1-x0)}" height="${H-T-B}" fill="var(--magenta)" opacity=".14"/><line x1="${x0}" x2="${x0}" y1="${T}" y2="${H-B}" stroke="var(--magenta)" stroke-width="2"/><line x1="${x1}" x2="${x1}" y1="${T}" y2="${H-B}" stroke="var(--magenta)" stroke-width="2"/>`;
+ const marks=ev.map(e=>{const X=x(e.d.getTime());if(X<L||X>W-Rr)return'';const Y=y(e.h);return `<circle cx="${X}" cy="${Y}" r="3.5" fill="var(--ink)"/><text x="${X}" y="${e.type==='HW'?Y-8:Y+16}" text-anchor="middle" font-size="11" fill="var(--ink)" font-family="IBM Plex Mono,monospace">${hm(e.d)}</text>`}).join('');
+ const checks=sim.checks.map(c=>c.h===null?'':`<circle cx="${x(c.eta.getTime())}" cy="${y(c.h)}" r="5" fill="${c.ok?'var(--go)':'var(--stop)'}" stroke="var(--card)" stroke-width="2"/>`).join('');
+ $('tideSvg').innerHTML=grid.join('')+`<text x="${L}" y="10" font-size="10" fill="var(--ink-2)" font-family="Barlow Semi Condensed,sans-serif" letter-spacing="1">HEIGHT (m) · DASHED = DRAUGHT</text>`+band+(p?`<path d="${p}" fill="none" stroke="var(--ink)" stroke-width="2"/>`:'')+draughtLine+marks+checks;
+ $('tideRows').innerHTML=S.tides.map((e,i)=>{const [d,tm]=(e.t||'T').split('T');return `<tr><td><select data-ti="${i}" data-k="type" style="width:auto"><option${e.type==='HW'?' selected':''}>HW</option><option${e.type==='LW'?' selected':''}>LW</option></select></td><td><input type="date" data-ti="${i}" data-k="d" value="${d}"></td><td><input type="time" data-ti="${i}" data-k="tm" value="${(tm||'').slice(0,5)}"></td><td class="num"><input class="mono" type="number" step="0.1" data-ti="${i}" data-k="h" value="${e.h}" style="width:5em"></td><td><button class="btn small" data-tdel="${i}" type="button" aria-label="Remove">✕</button></td></tr>`}).join('');
+}
+function renderRoute(R,sim){
+ $('wpRows').innerHTML=R.map((w,i)=>{const eta=sim.etas[i];const c=sim.checks.find(c=>c.i===i);const s=streamAt(eta||new Date());
+  const clear=c?(c.clear===null?'<span class="meh">no data</span>':`<span class="${c.ok?'ok':'bad'}">${c.clear>=0?'+':''}${c.clear.toFixed(1)} m</span>`):'<span class="note">—</span>';
+  const strm=s.rate>0.05?`${s.phase} ${s.rate.toFixed(1)} kn → ${pad(Math.round(s.to)).padStart(3,'0')}°`:'Slack';
+  return `<tr><td class="mono">${i===0?'Dep':i===R.length-1?'Arr':i}</td><td class="wp-name">${esc(w.name)}${w.note?`<div class="note" style="font-style:normal;font-family:var(--f-ui)">${esc(w.note)}</div>`:''}</td><td class="mono" style="white-space:nowrap;font-size:.8rem">${fmtPos(w)}</td><td class="num mono">${w.port?'':(w.depth===null||w.depth===''||w.depth===undefined?'—':Number(w.depth).toFixed(1))}</td><td class="mono">${eta?hm(eta):''}</td><td class="num">${w.port?'':clear}</td><td class="note" style="white-space:nowrap">${strm}</td><td>${w.port?'':`<button class="btn small" data-wedit="${i-1}" type="button">Edit</button>`}</td></tr>`}).join('');
+}
+function renderWpEdit(i){
+ if(i===null){$('wpEdit').innerHTML='';return}const w=S.plan.wps[i];
+ $('wpEdit').innerHTML=`<div style="border:1px solid var(--magenta);padding:12px;background:var(--card)"><div class="grid">
+  <label class="f">Name<input id="eName" value="${esc(w.name)}"></label>
+  <label class="f">Lat (decimal)<input id="eLat" class="mono" type="number" step="0.0001" value="${w.lat}"></label>
+  <label class="f">Lon (decimal, E +)<input id="eLon" class="mono" type="number" step="0.0001" value="${w.lon}"></label>
+  <label class="f">Chart depth (m)<input id="eDepth" class="mono" type="number" step="0.1" value="${w.depth??''}" placeholder="blank = no check"></label></div>
+  <label class="f" style="margin-top:8px">Pilotage note<input id="eNote" value="${esc(w.note||'')}"></label>
+  <div class="row" style="margin-top:10px"><button class="btn small primary" id="eSave" type="button">Save waypoint</button><button class="btn small" id="eUp" type="button">Move earlier</button><button class="btn small" id="eDel" type="button">Remove</button><button class="btn small" id="eClose" type="button">Close</button></div></div>`;
+ $('eSave').onclick=()=>{S.plan.routeKind=S.plan.routeKind==='direct'?'yours':S.plan.routeKind;Object.assign(w,{name:$('eName').value||'Waypoint',lat:+$('eLat').value,lon:+$('eLon').value,depth:$('eDepth').value===''?null:+$('eDepth').value,note:$('eNote').value});renderWpEdit(null);render()};
+ $('eUp').onclick=()=>{if(i>0){[S.plan.wps[i-1],S.plan.wps[i]]=[S.plan.wps[i],S.plan.wps[i-1]];renderWpEdit(i-1);render()}};
+ $('eDel').onclick=()=>{S.plan.wps.splice(i,1);renderWpEdit(null);render()};
+ $('eClose').onclick=()=>renderWpEdit(null);
+}
+function renderBail(R,sim){
+ const rows=[];for(const p of PORTS){if(p.id===S.plan.from||p.id===S.plan.to)continue;let best=Infinity,bi=0;
+  for(let i=0;i<R.length-1;i++)for(let k=0;k<=20;k++){const q=interp(R[i],R[i+1],k/20);const d=dist(p,q);if(d<best){best=d;bi=i}}
+  if(best<=12)rows.push({p,best,after:R[bi].name,bi})}
+ rows.sort((a,b)=>a.bi-b.bi||a.best-b.best);
+ $('bailRows').innerHTML=rows.length?rows.map(r=>`<tr><td class="place">${esc(r.p.name)}</td><td class="num mono">${r.best.toFixed(1)} nm</td><td class="note">${esc(r.after)}</td><td class="note">${esc(r.p.access)}</td></tr>`).join(''):'<tr><td colspan="4" class="note">No listed ports within 12 nm.</td></tr>';
+}
+function renderSun(R,sim){
+ const s=sunTimes(new Date(S.plan.date+'T12:00'),R[0].lat,R[0].lon);if(!s){$('sun').innerHTML='';return}
+ $('sun').innerHTML=[['First light',s.dawn],['Sunrise',s.rise],['Sunset',s.set],['Last light',s.dusk]].map(([a,b])=>`<div><dt>${a}</dt><dd>${b?hm(b):'—'}</dd></div>`).join('');
+ const spare=(s.set-sim.arrive)/60000;$('sunSub').textContent=spare>=0?`Arrive ${dur(spare)} before sunset`:`Arrive ${dur(-spare)} after sunset`;
+}
+function renderCheck(){
+ let html='',g='';S.check.forEach((c,i)=>{if(c.g!==g){g=c.g;html+=`<h3>${esc(g)}</h3>`}html+=`<label class="${c.done?'done':''}"><input type="checkbox" id="ck${i}" data-ck="${i}"${c.done?' checked':''}><span>${esc(c.t)}</span></label>`});
+ $('check').innerHTML=html;const d=S.check.filter(c=>c.done).length;$('checkSub').textContent=d+' of '+S.check.length+' done';
+}
+function renderVoyage(){
+ const infos=S.legs.map((_,i)=>legInfo(i));
+ const fd=d=>new Date(d+'T12:00').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});
+ let dayN=0,lastDate='';
+ $('legs').innerHTML=infos.map((L,i)=>{if(L.date!==lastDate){dayN++;lastDate=L.date}
+  const gap=i>0&&dist(infos[i-1].toPos,L.fromPos)>1;
+  return `<button class="leg${i===S.active?' on':''}" data-leg="${i}" type="button" aria-pressed="${i===S.active}">
+   <span class="d"><span>Leg ${i+1} · ${fd(L.date)}</span><span class="dot ${L.status}" title="${L.status}"></span></span>
+   <span class="r">${esc(L.from)} → ${esc(L.to)}</span>
+   <span class="t">${L.total<0.05?'No destination yet':hm(L.dep)+'–'+hm(L.arrive)+' · '+L.total.toFixed(1)+' nm'}${L.example?' · eg tides':''}</span>
+   ${gap?'<span class="gap">Doesn\'t start where leg '+i+' ends</span>':''}</button>`}).join('')+'<button class="leg add" id="addLeg" type="button">+ Add leg</button>';
+ const tot=infos.reduce((s,L)=>s+L.total,0);
+ $('voyageTitle').textContent=infos.length>1?`Voyage · ${infos[0].from} → ${infos[infos.length-1].to}`:'Voyage · single leg';
+ $('voyageSum').textContent=`${infos.length} leg${infos.length>1?'s':''} · ${tot.toFixed(1)} nm · ${dayN} day${dayN>1?'s':''}`;
+ $('delLeg').disabled=infos.length<2;
+}
+function switchLeg(i){if(i===S.active)return;save();S.active=i;loadLeg(i);renderWpEdit(null);$('passMsg').textContent='';$('tideMsg').textContent='';$('wxMsg').textContent='';bindInputs();render();window.scrollTo({top:0,behavior:'smooth'})}
+function addLeg(){
+ save();const prev=S.legs[S.legs.length-1],pi=legInfo(S.legs.length-1);
+ const L=clone(prev);const nd=new Date(prev.plan.date+'T12:00');nd.setDate(nd.getDate()+1);
+ const date=nd.getFullYear()+'-'+pad(nd.getMonth()+1)+'-'+pad(nd.getDate());
+ L.plan={from:prev.plan.to,to:prev.plan.to,cFrom:prev.plan.cTo||null,cTo:null,date,depart:prev.plan.depart,wps:[],routeKind:'direct'};
+ if(L.plan.from==='custom'&&!L.plan.cFrom)L.plan.cFrom={name:pi.to,lat:pi.toPos.lat,lon:pi.toPos.lon};
+ const hasTides=(prev.tides||[]).some(e=>e.t.startsWith(date))&&prev.station===(L.plan.from==='custom'?prev.station:port(L.plan.from).name.split(/[,(]/)[0].replace(/ Marina| Yacht Harbour| Quay/,'').trim());
+ if(!hasTides){L.tides=exampleTides(date);L.tideSource='example'}
+ L.station=L.plan.from==='custom'?prev.station:port(L.plan.from).name.split(/[,(]/)[0].replace(/ Marina| Yacht Harbour| Quay/,'').trim();
+ L.hourly=null;
+ S.legs.push(L);S.active=S.legs.length-1;loadLeg(S.active);bindInputs();render();
+ $('passMsg').textContent='New leg from '+pi.to+' on '+new Date(date+'T12:00').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'short'})+'. Pick a destination or import this leg\'s GPX.';
+ $('to').focus();
+}
+function renderSaved(){const p=store.get('plans',{});$('savedPlans').innerHTML='<option value="">Saved plans…</option>'+Object.keys(p).map(k=>`<option>${esc(k)}</option>`).join('')}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+// ---------- events ----------
+const num=(id)=>parseFloat($(id).value);
+['bName','bDraught','bSpeed','bUkc'].forEach(id=>$(id).addEventListener('change',()=>{S.boat={name:$('bName').value,draught:num('bDraught')||0,speed:num('bSpeed')||1,ukc:num('bUkc')||0};render()}));
+['sFlood','sSpring','sNeap','sOffset','sSR','sNR'].forEach(id=>$(id).addEventListener('change',()=>{S.stream={flood:num('sFlood')||0,spring:num('sSpring')||0,neap:num('sNeap')||0,offset:num('sOffset')||0,sr:num('sSR')||1,nr:num('sNR')||0};render()}));
+['wFrom','wKn','wGust','wWot'].forEach(id=>$(id).addEventListener('change',()=>{S.wind={from:num('wFrom')||0,kn:num('wKn')||0,gust:num('wGust')||0,wot:num('wWot')||12};S.hourly=null;$('wxMsg').textContent='';render()}));
+['kAdm','kStation','kRelay'].forEach(id=>$(id).addEventListener('change',()=>{S.keys={adm:$('kAdm').value.trim(),station:$('kStation').value.trim(),relay:$('kRelay').value.trim()};save()}));
+function showCustom(){$('customFromBox').hidden=S.plan.from!=='custom';$('customToBox').hidden=S.plan.to!=='custom'}
+function applyTemplate(){const t=template(S.plan.from,S.plan.to);S.plan.wps=t||[];S.plan.routeKind=t?'library':'direct'}
+$('from').onchange=$('to').onchange=()=>{const fromChanged=S.plan.from!==$('from').value;S.plan.from=$('from').value;S.plan.to=$('to').value;showCustom();applyTemplate();$('passMsg').textContent='';
+ if(fromChanged&&S.plan.from!=='custom'){S.keys.station=port(S.plan.from).name.split(/[,(]/)[0].replace(/ Marina| Yacht Harbour| Quay/,'').trim();$('kStation').value=S.keys.station;if(S.tideSource!=='example')$('tideMsg').textContent='Departure port changed. Fetch or enter tides for '+S.keys.station+'.'}
+ render()};
+const customSet=(end)=>{const nm=$(end==='from'?'cfName':'ctName').value.trim(),ps=$(end==='from'?'cfPos':'ctPos').value;const p=parsePos(ps);
+ if(!p){if(ps.trim())$('passMsg').textContent='Couldn\'t read that position. Try 51 37.6N 000 48.5E or 51.627, 0.809.';return}
+ S.plan[end==='from'?'cFrom':'cTo']={name:nm||(end==='from'?'Start':'Destination'),lat:+p.lat.toFixed(5),lon:+p.lon.toFixed(5)};$('passMsg').textContent='';render()};
+['cfName','cfPos'].forEach(id=>$(id).addEventListener('change',()=>customSet('from')));
+['ctName','ctPos'].forEach(id=>$(id).addEventListener('change',()=>customSet('to')));
+$('legs').onclick=e=>{if(e.target.closest('#addLeg')){addLeg();return}const b=e.target.closest('[data-leg]');if(b)switchLeg(+b.dataset.leg)};
+$('delLeg').onclick=()=>{if(S.legs.length<2)return;S.legs.splice(S.active,1);S.active=Math.max(0,S.active-1);loadLeg(S.active);renderWpEdit(null);bindInputs();render();$('passMsg').textContent='Leg removed.'};
+$('resetAll').onclick=()=>{$('resetConfirm').hidden=false;$('resetYes').focus()};
+$('resetNo').onclick=()=>{$('resetConfirm').hidden=true};
+$('resetYes').onclick=()=>{
+ const d=todayStr();
+ S.plan={from:'burnham',to:'burnham',cFrom:null,cTo:null,date:d,depart:'08:00',wps:[],routeKind:'direct'};
+ S.tides=exampleTides(d);S.tideSource='example';S.stream=clone(def.stream);S.hourly=null;S.wind=clone(def.wind);
+ S.keys.station='Burnham-on-Crouch';S.check.forEach(c=>c.done=false);
+ S.legs=[snapshot()];S.active=0;
+ $('resetConfirm').hidden=true;renderWpEdit(null);['pasteWps','cfName','cfPos','ctName','ctPos'].forEach(id=>$(id).value='');
+ $('tideMsg').textContent='';$('wxMsg').textContent='';bindInputs();render();
+ $('passMsg').textContent='Cleared. Pick a destination, import a GPX, or enter tides to start a new plan.';$('to').focus()};
+$('reverse').onclick=()=>{[S.plan.from,S.plan.to]=[S.plan.to,S.plan.from];[S.plan.cFrom,S.plan.cTo]=[S.plan.cTo,S.plan.cFrom];S.plan.wps.reverse();bindInputs();render()};
+$('pasteFill').onclick=()=>{$('pasteWps').value=S.plan.wps.map(w=>[w.name,fmtPos(w).replace(/[°′]/g,' ').replace(/\s+/g,' ').trim(),w.depth??''].filter(x=>x!=='').join(', ')).join('\n')};
+$('pasteApply').onclick=()=>{const bad=[],wps=[];
+ $('pasteWps').value.split('\n').map(l=>l.trim()).filter(Boolean).forEach((l,i)=>{
+  const name=(l.match(/^([^,\d-][^,]*?)\s*,/)||[])[1]||('WP'+(wps.length+1));
+  const tail=l.replace(/^[^,\d-][^,]*,/,'');
+  const p=parsePos(tail);if(!p){bad.push(i+1);return}
+  const parts=tail.split(',');let depth=null;
+  if(parts.length>=3||(parts.length===2&&/[NSEW]/i.test(parts[0])&&!/[NSEW]/i.test(parts[1]))){const d=parseFloat(parts[parts.length-1]);if(!isNaN(d)&&!/[NSEW]/i.test(parts[parts.length-1]))depth=d}
+  wps.push({name:name.trim(),lat:+p.lat.toFixed(5),lon:+p.lon.toFixed(5),depth,note:''})});
+ if(bad.length){$('passMsg').textContent='Couldn\'t read line '+bad.join(', ')+'. Nothing changed.';return}
+ if(!wps.length){$('passMsg').textContent='No waypoints in the box.';return}
+ S.plan.wps=wps;S.plan.routeKind='yours';$('passMsg').textContent=`Using your ${wps.length} waypoint${wps.length>1?'s':''}.`;render()};
+$('date').onchange=()=>{const old=S.plan.date;S.plan.date=$('date').value||todayStr();if(S.tideSource==='example')S.tides=exampleTides(S.plan.date);else if(!events().some(e=>e.t.startsWith(S.plan.date)))$('tideMsg').textContent='No tide events entered for this date. Fetch or add them.';render()};
+$('depart').onchange=()=>{S.plan.depart=$('depart').value||'08:00';render()};
+$('strip').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;S.plan.depart=b.dataset.t;$('depart').value=S.plan.depart;render()};
+$('wpRows').onclick=e=>{const b=e.target.closest('[data-wedit]');if(b)renderWpEdit(+b.dataset.wedit)};
+$('addWp').onclick=()=>{const R=route();const a=R[R.length-2],b=R[R.length-1];S.plan.wps.push({name:'New waypoint',lat:+((a.lat+b.lat)/2).toFixed(4),lon:+((a.lon+b.lon)/2).toFixed(4),depth:null,note:''});S.plan.routeKind='yours';render();renderWpEdit(S.plan.wps.length-1)};
+$('tideRows').onchange=e=>{const el=e.target;const i=+el.dataset.ti;if(isNaN(i))return;const ev=S.tides[i];let [d,tm]=ev.t.split('T');if(el.dataset.k==='type')ev.type=el.value;if(el.dataset.k==='d')d=el.value;if(el.dataset.k==='tm')tm=el.value;if(el.dataset.k==='h')ev.h=parseFloat(el.value)||0;ev.t=d+'T'+tm;S.tideSource='Entered by hand';render()};
+$('tideRows').onclick=e=>{const b=e.target.closest('[data-tdel]');if(b){S.tides.splice(+b.dataset.tdel,1);S.tideSource='Entered by hand';render()}};
+const addEv=type=>{const last=events().pop();let d=last?new Date(last.d.getTime()+6.2*3.6e6):localDate(S.plan.date,'06:00');S.tides.push({type,t:d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+hm(d),h:type==='HW'?4.8:0.5});S.tideSource='Entered by hand';render()};
+$('addHW').onclick=()=>addEv('HW');$('addLW').onclick=()=>addEv('LW');
+$('check').onchange=e=>{const i=e.target.dataset.ck;if(i!==undefined){S.check[+i].done=e.target.checked;renderCheck();save()}};
+$('addCheck').onclick=()=>{const v=$('newCheck').value.trim();if(!v)return;S.check.push({g:'My checks',t:v,done:false});$('newCheck').value='';renderCheck();save()};
+$('resetCheck').onclick=()=>{S.check.forEach(c=>c.done=false);renderCheck();save()};
+$('savePlan').onclick=()=>{save();const first=legInfo(0),last=legInfo(S.legs.length-1);const name=first.from+' → '+last.to+' · '+first.date+(S.legs.length>1?' · '+S.legs.length+' legs':'');const p=store.get('plans',{});p[name]={legs:clone(S.legs),active:S.active,boat:clone(S.boat)};store.set('plans',p);renderSaved();$('passMsg').textContent='Saved as "'+name+'" on this device.'};
+$('savedPlans').onchange=()=>{const p=store.get('plans',{})[$('savedPlans').value];if(!p)return;const c=clone(p);
+ if(c.legs){S.legs=c.legs;S.active=Math.min(c.active||0,c.legs.length-1);if(c.boat)S.boat=c.boat}else{S.plan=c.plan;if(c.boat)S.boat=c.boat;if(c.stream)S.stream=c.stream;S.legs=[snapshot()];S.active=0}
+ loadLeg(S.active);renderWpEdit(null);bindInputs();render();$('passMsg').textContent='Loaded.';$('savedPlans').value=''};
+
+// GPX import
+$('gpx').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const x=new DOMParser().parseFromString(r.result,'application/xml');let pts=[...x.querySelectorAll('rtept')];if(!pts.length)pts=[...x.querySelectorAll('wpt')];if(!pts.length){const tk=[...x.querySelectorAll('trkpt')];const stepN=Math.max(1,Math.floor(tk.length/12));pts=tk.filter((_,i)=>i%stepN===0)}
+ const wps=pts.map((p,i)=>({name:(p.querySelector('name')||{}).textContent||('WP'+(i+1)),lat:+p.getAttribute('lat'),lon:+p.getAttribute('lon'),depth:null,note:''})).filter(w=>!isNaN(w.lat));
+ if(wps.length<2){$('passMsg').textContent='That file has no route points I can read.';return}
+ const near=w=>PORTS.reduce((b,p)=>dist(w,p)<dist(w,b)?p:b,PORTS[0]);
+ const ends=[['from',wps[0]],['to',wps[wps.length-1]]];
+ for(const [end,w] of ends){const p=near(w);if(dist(w,p)<=1){S.plan[end]=p.id}else{S.plan[end]='custom';S.plan[end==='from'?'cFrom':'cTo']={name:w.name,lat:w.lat,lon:w.lon}}}
+ S.plan.wps=wps.slice(1,-1);S.plan.routeKind='yours';bindInputs();$('passMsg').textContent=`Imported ${wps.length} points from ${f.name}. Add chart depths to any shallow marks.`;render()}catch(err){$('passMsg').textContent='Couldn\'t read that GPX file.'}};r.readAsText(f);e.target.value=''};
+
+// GPS
+$('gpsBtn').onclick=()=>{if(!navigator.geolocation){$('passMsg').textContent='Location isn\'t available on this device.';return}
+ $('passMsg').textContent='Finding your position…';
+ navigator.geolocation.getCurrentPosition(pos=>{const me={lat:pos.coords.latitude,lon:pos.coords.longitude};const R=route();let best={d:Infinity};
+  for(let i=0;i<R.length-1;i++){const L=dist(R[i],R[i+1]);for(let k=0;k<=50;k++){const q=interp(R[i],R[i+1],k/50);const d=dist(me,q);if(d<best.d)best={d,i,k,L}}}
+  let rem=best.L*(1-best.k/50);for(let j=best.i+1;j<R.length-1;j++)rem+=dist(R[j],R[j+1]);
+  const eta=new Date(Date.now()+rem/S.boat.speed*3.6e6);
+  $('passMsg').textContent=`${fmtPos(me)} · ${best.d.toFixed(2)} nm off track · next: ${R[best.i+1].name} · ${rem.toFixed(1)} nm to go, ETA about ${hm(eta)} at ${S.boat.speed} kn`},
+  err=>{$('passMsg').textContent=err&&err.code===1?'Location is switched off for this app. Allow it in Settings › Privacy › Location Services › Safari Websites.':'Couldn\'t get a position fix. Try again in the open.'},{enableHighAccuracy:true,timeout:15000})};
+
+// Live tides — UKHO Admiralty UK Tidal API
+const ADM_DIRECT='https://admiraltyapi.azure-api.net/uktidalapi/api/V1';const admBase=()=>(S.keys.relay||ADM_DIRECT).replace(/\/$/,'');
+$('fetchTides').onclick=async()=>{
+ const key=S.keys.adm;if(!key&&!S.keys.relay){$('tideMsg').textContent='Add your Admiralty API key in Live data (section 09) first.';$('kAdm').focus();return}
+ $('tideMsg').textContent='Fetching tides…';
+ try{
+  const h=key?{headers:{'Ocp-Apim-Subscription-Key':key}}:{};
+  let sid=store.get('station.'+S.keys.station,null);
+  if(!sid){const r=await fetch(admBase()+'/Stations',h);if(!r.ok)throw new Error('Station list: HTTP '+r.status);const j=await r.json();const q=S.keys.station.toLowerCase();const hit=(j.features||[]).find(f=>(f.properties.Name||'').toLowerCase().includes(q));if(!hit)throw new Error('No station matching "'+S.keys.station+'"');sid=hit.properties.Id;store.set('station.'+S.keys.station,sid)}
+  const r=await fetch(admBase()+'/Stations/'+sid+'/TidalEvents?duration=7',h);if(!r.ok)throw new Error('Tidal events: HTTP '+r.status);
+  const j=await r.json();
+  S.tides=j.map(e=>{const d=new Date(/Z|[+-]\d\d:?\d\d$/.test(e.DateTime)?e.DateTime:e.DateTime+'Z');return{type:e.EventType==='HighWater'?'HW':'LW',t:d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+hm(d),h:Math.round(e.Height*10)/10}});
+  S.tideSource='Admiralty · '+S.keys.station+' · fetched '+hm(new Date());$('tideMsg').textContent=`Loaded ${S.tides.length} tide events for the next 7 days.`;render();
+ }catch(err){$('tideMsg').textContent=(err instanceof TypeError?(navigator.onLine?'Couldn\'t reach the Admiralty service. It may be refusing requests from web pages; add a relay URL in Live data, or enter tides from EasyTide.':'You\'re offline. Tides already loaded are still here; fetch again when you have signal.'):'Tide fetch failed: '+err.message)}
+};
+// Live wind — Open-Meteo
+$('fetchWx').onclick=async()=>{
+ const R=route(),m=R[Math.floor(R.length/2)];$('wxMsg').textContent='Fetching forecast…';
+ try{const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${m.lat}&longitude=${m.lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kn&timezone=Europe%2FLondon&forecast_days=7`);if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();
+  S.hourly={time:j.hourly.time,kn:j.hourly.wind_speed_10m,dir:j.hourly.wind_direction_10m,gust:j.hourly.wind_gusts_10m};
+  const w=windAt(localDate(S.plan.date,S.plan.depart));$('wxMsg').textContent=`Hourly wind loaded. At departure: ${Math.round(w.kn)} kn from ${Math.round(w.from)}°, gusting ${Math.round(w.gust)}.`;render()}
+ catch(err){$('wxMsg').textContent=err instanceof TypeError?(navigator.onLine?'Couldn\'t reach the forecast service. Enter the inshore forecast by hand for now.':'You\'re offline. Enter the inshore forecast by hand.'):'Forecast fetch failed: '+err.message}
+};
+
+bindInputs();render();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
+</script>
+
+</body>
+</html>
